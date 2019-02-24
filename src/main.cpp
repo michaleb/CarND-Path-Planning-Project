@@ -53,8 +53,8 @@ int main() {
 
   int lane = 1;
   double ref_vel = 0.0;
-  
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
+
+  h.onMessage([&lane,&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
@@ -104,32 +104,59 @@ int main() {
           }
 
           bool too_close = false;
-
+          bool too_close_left = false;
+          bool too_close_right = false;
+          int other_lane;
+          //std::cout <<"BEFORE" << " " << too_close <<std::endl;
+          
           for (int i=0; i < sensor_fusion.size(); ++i) {
             float d = sensor_fusion[i][6];
-            if (d < (2+4*lane+2) && d > (2+4*lane-2)) {
-              double vx = sensor_fusion[i][3];
-              double vy = sensor_fusion[i][4];
-              double other_car_speed = sqrt(vx*vx + vy*vy);
-              double other_car_s = sensor_fusion[i][5];
+            double vx = sensor_fusion[i][3];
+            double vy = sensor_fusion[i][4];
+            double other_car_speed = sqrt(vx*vx + vy*vy);
+            double other_car_s = sensor_fusion[i][5];
 
-              other_car_s += ((double)prev_size*0.02*other_car_speed);
+            other_car_s += ((double)prev_size*0.02*other_car_speed);
 
-              if ((other_car_s > car_s) && (other_car_s - car_s < 30)) {
-                too_close = true;
-              }
+                         
+            if (d > 0 && d < 4) {
+              other_lane = 0;
+            } 
+            else if(d > 4 && d < 8) {
+              other_lane = 1;
+            } 
+            else if(d > 8 && d < 12) {
+              other_lane = 2;
             }
-          }
 
+            if ((other_lane - lane) == 0) {
+              too_close |= (other_car_s > car_s) && (other_car_s - car_s) < 30 && (other_car_speed < 50/2.24);
+            } 
+            else if ((other_lane - lane) == -1) {
+              too_close_left |= (car_s + 30) > other_car_s && (car_s - 30) < other_car_s;
+            }
+            else if ((other_lane - lane) == 1) {
+              too_close_right |= (car_s + 30) > other_car_s && (car_s - 30) < other_car_s;
+            }
+          }    
+          std::cout << "TC "<< too_close <<" " <<"TCL "<< too_close_left <<" "<<"TCR "<< too_close_right<< std::endl;    
           if(too_close) {
-            ref_vel -= 4.0;
-          }
-          else if(ref_vel < 49.0) {
-            ref_vel += 4.0;
-          }
+            if (!too_close_left && lane != 0) {
+              lane -= 1;
+            }
+            else if (!too_close_right && lane != 2) {
+              lane += 1;
+            }
+            else {
+              ref_vel -= 0.224;
+            }
+          }              
 
-          /**
-           * TODO: define a path made up of (x,y) points that the car will visit
+          else if(ref_vel < 49.5) {
+            ref_vel += 0.224;
+          }
+            
+          /* TODO: define a path made up of (x,y) points that the car will visit
            *   sequentially every .02 seconds
            */
           vector<double> ptsx, ptsy;
@@ -150,6 +177,7 @@ int main() {
             ptsy.push_back(car_y);
           } 
           else {
+            //if there are more than 2 points from the previous path add the last and penultimate point to the vector
             ref_x = previous_path_x[prev_size-1];
             ref_y = previous_path_y[prev_size-1];
 
@@ -176,7 +204,7 @@ int main() {
           ptsy.push_back(next_wp1[1]);
           ptsy.push_back(next_wp2[1]);
 
-
+          //Executes the translation with car at origin and rotation to obtain car heading of zero degree
           for (int i = 0; i < ptsx.size(); ++i) {
             double shift_x = ptsx[i]-ref_x;
             double shift_y = ptsy[i]-ref_y;
@@ -189,7 +217,7 @@ int main() {
           tk::spline sp;
 
           sp.set_points(ptsx, ptsy);
-          //vector<double> ptsx, ptsy;
+          
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
@@ -214,7 +242,7 @@ int main() {
 
             double x_ref = x_point;
             double y_ref = y_point;
-
+            //Switching back to the roads frame of reference
             x_point = (x_ref*cos(ref_yaw)-y_ref*sin(ref_yaw));
             y_point = (x_ref*sin(ref_yaw)+y_ref*cos(ref_yaw));
 
