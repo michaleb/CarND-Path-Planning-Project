@@ -53,7 +53,7 @@ int main() {
 
   int lane = 1;
   double ref_vel = 0.0;
-
+    
   h.onMessage([&lane,&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
@@ -98,17 +98,27 @@ int main() {
 
           
           int prev_size = previous_path_x.size();
-
+          //std::cout <<"PREV-SIZE" <<" "<<prev_size<< std::endl;
+          
           if (prev_size > 0) {
             car_s = end_path_s;
+            car_d = end_path_d;
           }
 
-          bool too_close = false;
-          bool too_close_left = false;
-          bool too_close_right = false;
-          int other_lane;
-          //std::cout <<"BEFORE" << " " << too_close <<std::endl;
-          
+          int psl = 50; // posted speed limit in mph
+          int other_lane; // lane assignment of non-ego_car
+          int safe_dist = 30; // safe distance for lane changes.
+          int follow_dist = 40; // safe distance to follow cars 
+          bool platooning_l = false; //true if there are other cars just ahead (< 2*safe_dist) in adjacent left lane
+          bool platooning_r = false;//true if there are other cars just ahead (< 2*safe_dist) in adjacent right lane
+          bool too_close = false; //true if car before ego-car (in the same lane) is < safe_dist ahead
+          bool too_close_left = false; //true if cars (in adjacent left lane) are within unsafe zone [ego-car +/- safe_dist]
+          bool too_close_right = false; //true if cars (in adjacent right lane) are within unsafe zone [ego-car +/- safe_dist]
+          double acc = 0.316; //rate of change of velocity 
+          double speed_limit = 49.5; //maximum attainable speed
+          double sdf = 2.0;  //factor multiplies safe_dist; product used to determine beneficial lane changes
+          double mph_ms = 2.23694; //mph to m/s conversion factor
+                                     
           for (int i=0; i < sensor_fusion.size(); ++i) {
             float d = sensor_fusion[i][6];
             double vx = sensor_fusion[i][3];
@@ -117,8 +127,8 @@ int main() {
             double other_car_s = sensor_fusion[i][5];
 
             other_car_s += ((double)prev_size*0.02*other_car_speed);
-
-                         
+                                             
+            //Assigning lane values for other cars based on sensor fusion data
             if (d > 0 && d < 4) {
               other_lane = 0;
             } 
@@ -129,33 +139,50 @@ int main() {
               other_lane = 2;
             }
 
-            if ((other_lane - lane) == 0) {
-              too_close |= (other_car_s > car_s) && (other_car_s - car_s) < 30 && (other_car_speed < 50/2.24);
+            if ((other_lane - lane) == 0) { //other car in same lane
+              //If the 's' value of car ahead of the ego car (in the same lane) is < 30m and
+              //its speed is < speed limit then it is too close.
+              too_close |= (other_car_s > car_s) && (other_car_s - car_s) < follow_dist && (other_car_speed < psl/mph_ms);
             } 
-            else if ((other_lane - lane) == -1) {
-              too_close_left |= (car_s + 30) > other_car_s && (car_s - 30) < other_car_s;
+            else if ((other_lane - lane) == -1) { //other car in adjcent left lane
+
+              // If the 's' value of cars in the adjacent lane falls within the range of
+              // ego-car's 's' value +/- safe distance it is too close for a left lane change.
+              too_close_left |= (car_s + safe_dist) > other_car_s && (car_s - safe_dist) < other_car_s;
+              
+              // If cars in adjacent left lane are ahead and within 2 * safe_dist from ego_car and speed < ego_car speed
+              // then left lane change is inefficient
+              platooning_l |= (other_car_speed < car_speed) && (other_car_s > car_s) && other_car_s < (car_s + sdf*safe_dist);
             }
-            else if ((other_lane - lane) == 1) {
-              too_close_right |= (car_s + 30) > other_car_s && (car_s - 30) < other_car_s;
+            else if ((other_lane - lane) == 1) { //other car in adjacent right lane
+
+              // If the 's' value of cars in the adjacent lane falls within the range of
+              // ego-car's 's' value +/- safe distance it is too close for a right lane change.
+              too_close_right |= (car_s + safe_dist) > other_car_s && (car_s - safe_dist) < other_car_s;
+
+              // If cars in adjacent right lane are ahead and within 2 * safe_dist from ego_car and speed < ego_car speed
+              // then right lane change is inefficient
+              platooning_r |= (other_car_speed < car_speed) && (other_car_s > car_s) && other_car_s < (car_s + sdf*safe_dist);
             }
-          }    
-          std::cout << "TC "<< too_close <<" " <<"TCL "<< too_close_left <<" "<<"TCR "<< too_close_right<< std::endl;    
-          if(too_close) {
-            if (!too_close_left && lane != 0) {
+          } 
+                   
+          if(too_close) { // If other car is < follow_dist (40m) ahead check one of the following conditions           
+            if (!too_close_right && lane != 2 && !platooning_r) { // safe and efficient to do right lane change
+              lane += 1;
+              
+            }  
+            else if (!too_close_left && lane != 0 && !platooning_l) { // safe and efficient to do left lane change
               lane -= 1;
             }
-            else if (!too_close_right && lane != 2) {
-              lane += 1;
-            }
             else {
-              ref_vel -= 0.224;
+              ref_vel -= acc; //If none of prior two conditions met - too close behind car hence reduce speed
             }
           }              
 
-          else if(ref_vel < 49.5) {
-            ref_vel += 0.224;
+          else if(ref_vel < speed_limit) { //Increase speed until speed limit is attained
+            ref_vel += acc; 
           }
-            
+          //std::cout <<"TC"<<" "<<too_close<<" " <<"TCL"<< " "<<too_close_left<< " " <<"TCR"<< " "<<too_close_right<<" "<<"PL"<< " "<<platooning_l<< " "<<"PR"<<" "<<platooning_r<< std::endl;  
           /* TODO: define a path made up of (x,y) points that the car will visit
            *   sequentially every .02 seconds
            */
@@ -165,8 +192,9 @@ int main() {
           double ref_y = car_y;
           double ref_yaw = car_yaw;
 
-
-          if (prev_size < 2) {
+          // If there are no points from previous path create a new point using 
+          //the current (x,y) point of the car then add both points to the vector
+          if (prev_size < 2) { 
             double prev_car_x = car_x - cos(car_yaw);
             double prev_car_y = car_y - sin(car_yaw);
 
@@ -177,13 +205,14 @@ int main() {
             ptsy.push_back(car_y);
           } 
           else {
-            //if there are more than 2 points from the previous path add the last and penultimate point to the vector
+            //if there are more than 2 points from the previous path add the last and penultimate points to the vector
             ref_x = previous_path_x[prev_size-1];
             ref_y = previous_path_y[prev_size-1];
 
             double ref_x_prev = previous_path_x[prev_size-2];
             double ref_y_prev = previous_path_y[prev_size-2];
-            ref_yaw = atan2(ref_y - ref_y_prev, ref_x - ref_x_prev);
+            //previous yaw is the angle subtended between the last two pair of points of the previous path
+            ref_yaw = atan2(ref_y - ref_y_prev, ref_x - ref_x_prev); 
 
             ptsx.push_back(ref_x_prev);
             ptsx.push_back(ref_x);
@@ -192,6 +221,8 @@ int main() {
             ptsy.push_back(ref_y);
           } 
           
+          //generate 3 additional points at further distances from current ego_car 's' value
+          // and add to vector which now has 5 pairs of points (x,y) values
           vector<double> next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp2 = getXY(car_s+90, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -214,6 +245,8 @@ int main() {
 
           }
           
+          //using the previous and generated points the spline function generates coefficients for a cubic polynomial
+          // that can interpolate any point between the 5 points creating a smoth trajectory for the ego _car
           tk::spline sp;
 
           sp.set_points(ptsx, ptsy);
@@ -221,20 +254,27 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          
+          //previous path values ate added to the next path vector first to create smooth motion transitions of ego_car
           for (int i = 0; i < prev_size; ++i){
             next_x_vals.push_back(previous_path_x[i]);
             next_y_vals.push_back(previous_path_y[i]);
           }
 
+          //geenrate a distance value to be used to calculate speed of ego_car
           double target_x = 30.0;
           double target_y = sp(target_x);
-          double target_dist = distance(target_x, 0, target_y, 0);
+          double target_dist = distance(target_x, 0, 0, target_y);
+          //std::cout <<"TARGET"<< " "<< target_dist << std::endl;
 
           double x_add_on = 0;
 
+          //the target distance value is divided by how much the ego_car moves in 0.02 seconds (m/s x s = m)
+          //to produce a factor that is then used to create x-values at intervals along the  given x range
+          // then spline is used to obtain the correxponding y-values. Genrally about 3 points 
+          // are generated using the spline in this step, except when intialized with no prior path points.
+
           for (int i = 0; i <= 50-prev_size; ++i) {
-            double N = (target_dist/(0.02*ref_vel/2.24));
+            double N = (target_dist/(0.02*ref_vel/mph_ms));
             double x_point = x_add_on+(target_x)/N;
             double y_point = sp(x_point);
 
@@ -242,7 +282,7 @@ int main() {
 
             double x_ref = x_point;
             double y_ref = y_point;
-            //Switching back to the roads frame of reference
+            //Switching back to the map's frame of reference
             x_point = (x_ref*cos(ref_yaw)-y_ref*sin(ref_yaw));
             y_point = (x_ref*sin(ref_yaw)+y_ref*cos(ref_yaw));
 
