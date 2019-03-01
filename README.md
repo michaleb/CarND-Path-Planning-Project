@@ -1,6 +1,44 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
+
+[//]: # (Image References)
+
+[image1]: ./path_planning.jpg "Vehicle on highway - 27.74 miles no incidents"
    
+### Introduction
+This project utilizes C++ program that takes as input Cartesian [x,y] and Frenet [s,d] coordinates, velocity components [vx, vy] and yaw angle of cars going around a circular 3 lane highway in a simulator. It then predicts the locations [s-values] of the simulator controlled cars for approximately 1 second out into the future and based on this information determines the behaviour of the ego car under its control and finally outputs trajectories so that the ego car safely manuevers through the traffic without violating the required speed limit, total acceleration and Jerk along the simulated highway. 
+
+In order to predict the locations of the other cars on the highway sensor fusion data is read in from the simulator into the program. This data contains [car_id, x, y, vx, vy, s, d] where vx and vy, the other car's x and y velocity components, are used to calculate its speed. The future location [s-value] is calculated by multiplying its speed by the number of points from the previous path and by the time taken to move between points, this value is then added to the car's current position. These s-values are then compared with the ego car's current s-value to determine their relative positions. 
+
+The planned behaviour of the ego car is governed by rules that guarantee safety and comfort and adhere to traffic laws. The behaviour module determines if another car is infront of and in the same lane as the ego car, when to change speed and when it is safe to change lanes.In my implementation I included a feature [line# 155 & 165] that verifies if a lane change would result in the ego car improving its forward advance as shown in code snippet here:
+
+```
+    // If cars in adjacent left lane are ahead and within 2 * safe_dist from ego_car and speed < ego_car speed
+   // then left lane change is not optimized
+
+      platooning_l |= (other_car_speed < car_speed) && (other_car_s > car_s) && other_car_s < (car_s + sdf*safe_dist);
+            }
+``` 
+If the above condition is true even if it is safe to do a lane change, based on the prior condition of too_close_left being false [line# 161] and shown here:
+
+```
+    // If the 's' value of cars in the adjacent lane falls within the range of
+    // ego-car's 's' value +/- safe distance it is too close for a left lane change.
+
+      too_close_left |= (car_s + safe_dist) > other_car_s && (car_s - safe_dist) < other_car_s; 
+
+```
+For the condition of 'too_close' 10m was added to the safe distance used for lane changes to increase the braking distance and improve the performance for example when cars brake up suddenly.
+
+For trajectory generation the coefficients of cubic polynomials (spline function) were used to create smooth curves by interpolating the combined last two points from the previous path and the three waypoints generated with futuristic horizons of 30, 60 and 90m. The target distance calculated from the chosen horizon x-value of 30m is then used to calculate the number of parts in which to divide the horizon x-value which are then used in the spline function to create the y-values, three pairs of [x,y] values are generated on each subsequent cycle.
+
+### Results
+The performance of the car is really good with only a few anamolies on ocassion. See picture below of car going on highway for over 27 miles without an incident.
+
+![alt text][image1]
+
+
+
 ### Simulator.
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).  
 

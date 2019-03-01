@@ -151,7 +151,7 @@ int main() {
               too_close_left |= (car_s + safe_dist) > other_car_s && (car_s - safe_dist) < other_car_s;
               
               // If cars in adjacent left lane are ahead and within 2 * safe_dist from ego_car and speed < ego_car speed
-              // then left lane change is inefficient
+              // then left lane change is not optimized
               platooning_l |= (other_car_speed < car_speed) && (other_car_s > car_s) && other_car_s < (car_s + sdf*safe_dist);
             }
             else if ((other_lane - lane) == 1) { //other car in adjacent right lane
@@ -161,7 +161,7 @@ int main() {
               too_close_right |= (car_s + safe_dist) > other_car_s && (car_s - safe_dist) < other_car_s;
 
               // If cars in adjacent right lane are ahead and within 2 * safe_dist from ego_car and speed < ego_car speed
-              // then right lane change is inefficient
+              // then right lane change is not optimized
               platooning_r |= (other_car_speed < car_speed) && (other_car_s > car_s) && other_car_s < (car_s + sdf*safe_dist);
             }
           } 
@@ -245,7 +245,7 @@ int main() {
 
           }
           
-          //using the previous and generated points the spline function generates coefficients for a cubic polynomial
+          //using the previous and generated points the spline generates coefficients for a cubic polynomial
           // that can interpolate any point between the 5 points creating a smoth trajectory for the ego _car
           tk::spline sp;
 
@@ -260,7 +260,7 @@ int main() {
             next_y_vals.push_back(previous_path_y[i]);
           }
 
-          //geenrate a distance value to be used to calculate speed of ego_car
+          //geenrate a target distance from a future x-value to be used to calculate speed of ego_car
           double target_x = 30.0;
           double target_y = sp(target_x);
           double target_dist = distance(target_x, 0, 0, target_y);
@@ -269,9 +269,9 @@ int main() {
           double x_add_on = 0;
 
           //the target distance value is divided by how much the ego_car moves in 0.02 seconds (m/s x s = m)
-          //to produce a factor that is then used to create x-values at intervals along the  given x range
+          //to produce a factor N that divides the target x-value at intervals along the given x horizon
           // then spline is used to obtain the correxponding y-values. Genrally about 3 points 
-          // are generated using the spline in this step, except when intialized with no prior path points.
+          // are generated using the spline in this step, except when first intialized with no prior path points.
 
           for (int i = 0; i <= 50-prev_size; ++i) {
             double N = (target_dist/(0.02*ref_vel/mph_ms));
